@@ -28,6 +28,9 @@ public class DiceAutomationMain {
     private static final String CREDENTIALS_FILE = "credentials.txt";
 
     public static void main(String[] args) {
+        // Print working directory for debugging
+        System.out.println("Working directory: " + System.getProperty("user.dir"));
+        
         logger.info("Starting Dice automation (Login, Job Search, and Data Extraction).");
         Scanner scanner = new Scanner(System.in);
         String email, password, jobTitle, location;
@@ -142,14 +145,18 @@ public class DiceAutomationMain {
         System.out.print("Filter by Work Authorization? (Y/N, default N): ");
         workAuthChoice = scanner.nextLine().trim();
 
-        // --- Check for saved filters specific to this user ---
+        // --- Prompt for keywords to filter job titles ---
+        System.out.print("Enter keyword(s) to filter job titles (comma separated; leave blank for no filtering): ");
+        String keywordInput = scanner.nextLine().trim();
+        String[] keywords = keywordInput.isEmpty() ? new String[0] : keywordInput.split("\\s*,\\s*");
+
+        // --- (Optional) Check for saved filters (per user) ---
         String filterFileName = "filters_" + email.replaceAll("[^a-zA-Z0-9]", "") + ".txt";
         File filterFile = new File(filterFileName);
         if (filterFile.exists()) {
             System.out.print("Saved filter settings found. Use saved filters? (Y/N): ");
             String useSavedFilters = scanner.nextLine().trim();
             if (useSavedFilters.equalsIgnoreCase("Y")) {
-                // Load filters from file (format: postedDateOption,empTypeInput,employerTypeInput,easyApplyChoice,workAuthChoice)
                 try (BufferedReader br = new BufferedReader(new FileReader(filterFile))) {
                     String line = br.readLine();
                     String[] parts = line.split(",");
@@ -246,12 +253,10 @@ public class DiceAutomationMain {
         // --- Apply Filters ---
         DiceFilterActions.applyFilters(driver, wait, postedDateOption, empTypeInput, employerTypeInput, easyApplyChoice, workAuthChoice);
 
-        // --- Extract Job Titles and IDs from all pages ---
-        // We'll loop from page 1 until no job titles are found.
+        // --- Extract Job Titles and IDs from all pages, filtering by keywords ---
         String baseUrl = driver.getCurrentUrl();
-        logger.info("Starting job title extraction from all pages.");
+        logger.info("Starting job title extraction from all pages, filtering by keywords.");
         int currentPage = 1;
-        // CSV file for saving results
         String csvFile = "job_results.csv";
         try (BufferedWriter csvWriter = new BufferedWriter(new FileWriter(csvFile))) {
             // Write CSV header
@@ -276,15 +281,29 @@ public class DiceAutomationMain {
                     logger.info("No job titles found on page {}. Ending extraction.", currentPage);
                     break;
                 }
-                logger.info("Page {} job titles:", currentPage);
+                logger.info("Processing page {} job data.", currentPage);
+                boolean foundMatchOnPage = false;
                 for (DiceFilterActions.JobData jobData : jobDataList) {
-                    logger.info(jobData.getTitle());
-                    // Write to CSV: enclose in quotes in case of commas
-                    String jobLink = "https://www.dice.com/job-detail/" + jobData.getId();
-                    csvWriter.write("\"" + jobData.getTitle().replace("\"", "\"\"") + "\"," + jobLink);
-                    csvWriter.newLine();
+                    String title = jobData.getTitle();
+                    boolean matches = false;
+                    for (String keyword : keywords) {
+                        if (!keyword.isEmpty() && title.toLowerCase().contains(keyword.toLowerCase())) {
+                            matches = true;
+                            break;
+                        }
+                    }
+                    if (matches) {
+                        foundMatchOnPage = true;
+                        String jobLink = "https://www.dice.com/job-detail/" + jobData.getId();
+                        logger.info("Matched: {}", title);
+                        csvWriter.write("\"" + title.replace("\"", "\"\"") + "\"," + jobLink);
+                        csvWriter.newLine();
+                    }
                 }
                 csvWriter.flush();
+                if (!foundMatchOnPage) {
+                    logger.info("No matching job titles found on page {}.", currentPage);
+                }
                 currentPage++;
             }
         } catch (IOException e) {
@@ -312,7 +331,6 @@ public class DiceAutomationMain {
     private static void saveFilters(String filterFileName, int postedDateOption, String empTypeInput, 
                                     String employerTypeInput, String easyApplyChoice, String workAuthChoice) {
         try (BufferedWriter bw = new BufferedWriter(new FileWriter(filterFileName))) {
-            // Save filters as comma-separated values
             bw.write(postedDateOption + "," + empTypeInput + "," + employerTypeInput + "," + easyApplyChoice + "," + workAuthChoice);
         } catch (IOException e) {
             logger.error("Error saving filters: {}", e.getMessage(), e);
