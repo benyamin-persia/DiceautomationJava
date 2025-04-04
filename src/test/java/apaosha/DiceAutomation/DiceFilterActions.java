@@ -140,7 +140,6 @@ public class DiceFilterActions {
         return jobDataList;
     }
     
-    // Static inner class to hold job data
     public static class JobData {
         private String title;
         private String id;
